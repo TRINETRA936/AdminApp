@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Uploaded Images</title>
+</head>
+<body>
+    <h2>Uploaded Images</h2>
+    {% for img in images %}
+        <div style="margin-bottom: 10px;">
+            <img src="{{ img }}" width="200" />
+        </div>
+    {% endfor %}
+</body>
+</html>
