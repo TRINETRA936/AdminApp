@@ -1,59 +1,73 @@
-from flask import Flask, jsonify, request, Response, send_from_directory
-from flask_cors import CORS
-from products import products
+from flask import Flask, Response, request, send_file, send_from_directory, jsonify
 import os
 
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests
 
-# Route to get all products
-@app.route("/products", methods=["GET"])
-def get_products():
-    product_list = []
-    for product in products:
-        product_data = product.copy()
-        product_data["image_url"] = f"http://192.168.0.100:5000/static/images/{product['image']}"
-        if "video" in product and product["video"]:
-            product_data["video_url"] = f"http://192.168.0.100:5000/static/videos/{product['video']}"
-        else:
-            product_data["video_url"] = ""
-        product_list.append(product_data)
-    return jsonify(product_list)
+# Folder paths
+VIDEO_FOLDER = os.path.join(app.root_path, 'static', 'videos')
+IMAGE_FOLDER = os.path.join(app.root_path, 'static', 'images')
 
-# Route to serve images
-@app.route("/static/images/<filename>")
-def get_image(filename):
-    return send_from_directory("static/images", filename)
+# ----------------------------
+# Video streaming with range support
+# ----------------------------
+@app.route('/video/<path:filename>')
+def stream_video(filename):
+    file_path = os.path.join(VIDEO_FOLDER, filename)
 
-# Route to serve videos with range support
-@app.route("/static/videos/<filename>")
-def get_video(filename):
-    path = os.path.join("static/videos", filename)
-    range_header = request.headers.get('Range', None)
-    if not os.path.exists(path):
+    if not os.path.exists(file_path):
         return "Video not found", 404
 
-    file_size = os.path.getsize(path)
-    start, end = 0, file_size - 1
+    range_header = request.headers.get('Range', None)
+    if not range_header:
+        return send_file(file_path)
 
-    if range_header:
-        range_match = range_header.replace("bytes=", "").split("-")
-        if range_match[0]:
-            start = int(range_match[0])
-        if len(range_match) > 1 and range_match[1]:
-            end = int(range_match[1])
-    length = end - start + 1
+    size = os.path.getsize(file_path)
+    byte1, byte2 = 0, None
 
-    with open(path, "rb") as f:
-        f.seek(start)
+    m = range_header.replace('bytes=', '').split('-')
+    if m[0]:
+        byte1 = int(m[0])
+    if len(m) > 1 and m[1]:
+        byte2 = int(m[1])
+
+    length = size - byte1
+    if byte2 is not None:
+        length = byte2 - byte1 + 1
+
+    with open(file_path, 'rb') as f:
+        f.seek(byte1)
         data = f.read(length)
 
-    rv = Response(data, 206, mimetype="video/mp4", content_type="video/mp4")
-    rv.headers.add("Content-Range", f"bytes {start}-{end}/{file_size}")
-    rv.headers.add("Accept-Ranges", "bytes")
-    rv.headers.add("Content-Length", str(length))
+    rv = Response(data, status=206, mimetype="video/mp4", direct_passthrough=True)
+    rv.headers.add('Content-Range', f'bytes {byte1}-{byte1 + length - 1}/{size}')
+    rv.headers.add('Accept-Ranges', 'bytes')
     return rv
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+# ----------------------------
+# Image serving
+# ----------------------------
+@app.route('/image/<path:filename>')
+def serve_image(filename):
+    file_path = os.path.join(IMAGE_FOLDER, filename)
+    if not os.path.exists(file_path):
+        return "Image not found", 404
+    return send_from_directory(IMAGE_FOLDER, filename)
 
+# ----------------------------
+# API to list files (optional)
+# ----------------------------
+@app.route('/list/videos')
+def list_videos():
+    files = os.listdir(VIDEO_FOLDER)
+    return jsonify(files)
+
+@app.route('/list/images')
+def list_images():
+    files = os.listdir(IMAGE_FOLDER)
+    return jsonify(files)
+
+# ----------------------------
+# Main entry
+# ----------------------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
